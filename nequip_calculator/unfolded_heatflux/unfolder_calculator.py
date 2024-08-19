@@ -43,6 +43,7 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
     def calculate(self, atoms=None, properties=["energy"], system_changes=all_changes):
 
         n = len(atoms)
+        volume = atoms.get_volume()
         unfolded = self.unfolder(atoms)
         atoms = unfolded.atoms
 
@@ -99,7 +100,7 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
             (pos * inner.unsqueeze(1)).sum(axis=0).detach().cpu().numpy()
         )
 
-        heat_flux = (hf_potential_term - hf_force_term) / atoms.get_volume()
+        heat_flux = (hf_potential_term - hf_force_term) / volume
 
         self.results = {
             "heat_flux": heat_flux,
