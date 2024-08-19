@@ -10,7 +10,7 @@ from ase.calculators.calculator import all_changes
 from nequip.ase import NequIPCalculator
 from nequip.data import AtomicData, AtomicDataDict
 
-class HardyCalculator(NequIPCalculator, torch.nn.Module):
+class HardyCalculator(NequIPCalculator):
     implemented_properties = [
         "energy",
         "forces",
@@ -24,10 +24,7 @@ class HardyCalculator(NequIPCalculator, torch.nn.Module):
         *args,
         **kwargs,
     ):
-        torch.nn.Module.__init__(self)
         NequIPCalculator.__init__(self, *args, **kwargs)
-        self.register_buffer("_empty", torch.Tensor())
-
         self.barycenter = barycenter
 
 

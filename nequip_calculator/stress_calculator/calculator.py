@@ -8,7 +8,7 @@ from ase import units
 from nequip.ase import NequIPCalculator
 from nequip.data import AtomicData, AtomicDataDict
 
-class StressCalculator(NequIPCalculator, torch.nn.Module):
+class StressCalculator(NequIPCalculator):
     r"""Compute atomic stress from dui/dstrain.
 
     Args:
@@ -21,9 +21,7 @@ class StressCalculator(NequIPCalculator, torch.nn.Module):
         *args,
         **kwargs,
     ):
-        torch.nn.Module.__init__(self)
         NequIPCalculator.__init__(self, *args, **kwargs)
-        self.register_buffer("_empty", torch.Tensor())
 
     def calculate(self, atoms=None, properties=["energy"], system_changes=all_changes):
 

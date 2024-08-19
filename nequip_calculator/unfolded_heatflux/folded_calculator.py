@@ -8,15 +8,13 @@ from ase.calculators.calculator import Calculator, all_changes
 from nequip.ase import NequIPCalculator
 from nequip.data import AtomicData, AtomicDataDict
 
-class FoldedHeatFluxCalculator(NequIPCalculator, torch.nn.Module):
+class FoldedHeatFluxCalculator(NequIPCalculator):
     def __init__(
         self,
         *args,
         **kwargs,
     ):
-        torch.nn.Module.__init__(self)
         NequIPCalculator.__init__(self, *args, **kwargs)
-        self.register_buffer("_empty", torch.Tensor())
 
     def calculate(self, atoms=None, properties=["energy"], system_changes=all_changes):
         # call to base-class to set atoms attribute

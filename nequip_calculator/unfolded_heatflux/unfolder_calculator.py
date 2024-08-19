@@ -9,8 +9,7 @@ from nequip.data import AtomicData, AtomicDataDict
 
 from .unfolder import Unfolder
 
-
-class UnfoldedHeatFluxCalculator(NequIPCalculator, torch.nn.Module):
+class UnfoldedHeatFluxCalculator(NequIPCalculator):
     def __init__(
         self,
         skin=None,
@@ -21,9 +20,7 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator, torch.nn.Module):
         *args,
         **kwargs
     ):
-        torch.nn.Module.__init__(self)
         NequIPCalculator.__init__(self, *args, **kwargs)
-        self.register_buffer("_empty", torch.Tensor())
 
         # effective cutoff
         cutoff = self.r_max
