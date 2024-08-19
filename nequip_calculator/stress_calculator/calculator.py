@@ -77,7 +77,7 @@ class StressCalculator(NequIPCalculator):
         jac = torch.autograd.functional.jacobian(
             func=wrapper,
             inputs=data["_strain"],
-            create_graph=self.training,  # needed to allow gradients of this output during training
+            create_graph=True,  # needed to allow gradients of this output during training
             # vectorize=self.vectorize,
             # strategy="forward-mode",
         )
