@@ -41,7 +41,6 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
 
 
     def calculate(self, atoms=None, properties=["energy"], system_changes=all_changes):
-        print(f"calc atoms: {atoms = }")
 
         n = len(atoms)
         volume = atoms.get_volume()
