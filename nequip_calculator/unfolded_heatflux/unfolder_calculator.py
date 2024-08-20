@@ -41,17 +41,17 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
 
 
     def calculate(self, atoms=None, properties=["energy"], system_changes=all_changes):
+        print(f"calc atoms: {atoms = }")
 
         n = len(atoms)
         volume = atoms.get_volume()
         unfolded = self.unfolder(atoms)
-        atoms = unfolded.atoms
 
         # call to base-class to set atoms attribute
         Calculator.calculate(self, atoms)
 
         # prepare data
-        data = AtomicData.from_ase(atoms=atoms, r_max=self.r_max)
+        data = AtomicData.from_ase(atoms=unfolded.atoms, r_max=self.r_max)
         for k in AtomicDataDict.ALL_ENERGY_KEYS:
             if k in data:
                 del data[k]
@@ -63,12 +63,11 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
         self.results = {}
         pos = data[AtomicDataDict.POSITIONS_KEY]
 
-        velocities = torch.tensor(atoms.get_velocities() * units.fs * 1000).to(self.device)
+        velocities = torch.tensor(unfolded.atoms.get_velocities() * units.fs * 1000).to(self.device)
         aux_pos = pos.detach().squeeze()[:n, :]
 
         pos.requires_grad_(True)
         data = self.model(data)
-
         energies = data[AtomicDataDict.PER_ATOM_ENERGY_KEY][:n, :]
 
         potential_barycenter = torch.sum(aux_pos * energies, axis=0)
