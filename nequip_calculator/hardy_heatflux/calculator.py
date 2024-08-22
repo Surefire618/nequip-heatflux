@@ -115,7 +115,7 @@ class HardyCalculator(NequIPCalculator):
         self.results["energy"] = energy
 
 
-        vs = atoms.get_velocities() * units.fs * 1000
+        vs = atoms.get_velocities() * units.fs
         fluxes = np.squeeze(self.results["virials"] @ vs[:, :, None])
         heat_flux = fluxes.sum(axis=0)
         self.results["heat_flux"] = heat_flux

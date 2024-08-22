@@ -114,7 +114,7 @@ class StressCalculator(NequIPCalculator):
         # stresses_voigt = np.asarray([full_3x3_to_voigt_6_stress(stress) for stress in stresses])
         self.results["stresses"] = stresses
 
-        vs = atoms.get_velocities() * units.fs * 1000
+        vs = atoms.get_velocities() * units.fs
         fluxes = np.squeeze(self.results["stresses"] @ vs[:, :, None])
         heat_flux = fluxes.sum(axis=0)
         self.results["heat_flux"] = heat_flux

@@ -37,7 +37,7 @@ class FoldedHeatFluxCalculator(NequIPCalculator):
 
         n = len(atoms)
 
-        velocities = torch.tensor(atoms.get_velocities() * units.fs * 1000).to(self.device)
+        velocities = torch.tensor(atoms.get_velocities() * units.fs).to(self.device)
 
         pos.requires_grad_(True)
         data = self.model(data)

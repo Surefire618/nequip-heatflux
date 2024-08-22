@@ -62,7 +62,7 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
         self.results = {}
         pos = data[AtomicDataDict.POSITIONS_KEY]
 
-        velocities = torch.tensor(unfolded.atoms.get_velocities() * units.fs * 1000).to(self.device)
+        velocities = torch.tensor(unfolded.atoms.get_velocities() * units.fs).to(self.device)
         aux_pos = pos.detach().squeeze()[:n, :]
 
         pos.requires_grad_(True)
