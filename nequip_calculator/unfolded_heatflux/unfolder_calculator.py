@@ -106,7 +106,8 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
             "heat_flux_potential_term": hf_potential_term,
         }
         self.results["forces"] = data[AtomicDataDict.FORCE_KEY][:n,:].detach().cpu().numpy()
-        self.results["stress"] = data[AtomicDataDict.STRESS_KEY][:n,:,:].detach().squeeze().cpu().numpy()
+        if AtomicDataDict.STRESS_KEY in data:
+            self.results["stress"] = data[AtomicDataDict.STRESS_KEY][:n,:,:].detach().squeeze().cpu().numpy()
         self.results["energies"] = energies.detach().cpu().numpy()
         self.results["energy"] = self.results["energies"].sum()
 
