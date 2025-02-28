@@ -49,6 +49,27 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
         # call to base-class to set atoms attribute
         Calculator.calculate(self, atoms)
 
+        # prepare data for calculating energy, forces, stress
+        data = AtomicData.from_ase(atoms=atoms, r_max=self.r_max)
+        for k in AtomicDataDict.ALL_ENERGY_KEYS:
+            if k in data:
+                del data[k]
+        data = self.transform(data)
+        data = data.to(self.device)
+        data = AtomicData.to_AtomicDataDict(data)
+
+        # calculate energy, forces, stress
+        data = self.model(data)
+
+        self.results = {}
+        self.results["forces"] = data[AtomicDataDict.FORCE_KEY][:n,:].detach().cpu().numpy()
+        if AtomicDataDict.STRESS_KEY in data:
+            self.results["stress"] = data[AtomicDataDict.STRESS_KEY][:n,:,:].detach().squeeze().cpu().numpy()
+        self.results["energies"] = data[AtomicDataDict.PER_ATOM_ENERGY_KEY][:n, :].detach().cpu().numpy()
+        self.results["energy"] = self.results["energies"].sum()
+
+        del data # do we need this ?
+
         # prepare data
         data = AtomicData.from_ase(atoms=unfolded.atoms, r_max=self.r_max)
         for k in AtomicDataDict.ALL_ENERGY_KEYS:
@@ -59,7 +80,6 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
         data = AtomicData.to_AtomicDataDict(data)
 
         # predict + extract data
-        self.results = {}
         pos = data[AtomicDataDict.POSITIONS_KEY]
 
         velocities = torch.tensor(unfolded.atoms.get_velocities() * units.fs).to(self.device)
@@ -100,16 +120,10 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
 
         heat_flux = (hf_potential_term - hf_force_term) / volume
 
-        self.results = {
+        self.results.update({
             "heat_flux": heat_flux,
             "heat_flux_force_term": hf_force_term,
             "heat_flux_potential_term": hf_potential_term,
-        }
-        self.results["forces"] = data[AtomicDataDict.FORCE_KEY][:n,:].detach().cpu().numpy()
-        if AtomicDataDict.STRESS_KEY in data:
-            self.results["stress"] = data[AtomicDataDict.STRESS_KEY][:n,:,:].detach().squeeze().cpu().numpy()
-        self.results["energies"] = energies.detach().cpu().numpy()
-        self.results["energy"] = self.results["energies"].sum()
-
+        })
 
         return self.results
