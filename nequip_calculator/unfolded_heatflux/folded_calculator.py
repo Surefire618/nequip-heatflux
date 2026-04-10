@@ -8,7 +8,7 @@ from ase.calculators.calculator import Calculator, all_changes
 from nequip.ase import NequIPCalculator
 from nequip.data import AtomicData, AtomicDataDict
 
-from .unfolder_calculator import _strip_grad_wrappers
+from .unfolder_calculator import _find_grad_wrapper_parent, _spliced_grad_wrapper
 
 
 class FoldedHeatFluxCalculator(NequIPCalculator):
@@ -19,8 +19,8 @@ class FoldedHeatFluxCalculator(NequIPCalculator):
     ):
         NequIPCalculator.__init__(self, *args, **kwargs)
 
-        self.energy_model = _strip_grad_wrappers(self.model)
-        if self.energy_model is self.model:
+        self._grad_wrapper_location = _find_grad_wrapper_parent(self.model)
+        if self._grad_wrapper_location is None:
             print(
                 "FoldedHeatFluxCalculator: no GradientOutput/StressOutput "
                 "wrapper found on the loaded model; the heat-flux autograd "
@@ -68,7 +68,8 @@ class FoldedHeatFluxCalculator(NequIPCalculator):
         velocities = torch.tensor(atoms.get_velocities() * units.fs).to(self.device)
 
         pos.requires_grad_(True)
-        data = self.energy_model(data)
+        with _spliced_grad_wrapper(self._grad_wrapper_location):
+            data = self.model(data)
 
         energies = data[AtomicDataDict.PER_ATOM_ENERGY_KEY]
 

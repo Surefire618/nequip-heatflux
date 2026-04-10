@@ -1,3 +1,5 @@
+import contextlib
+
 import numpy as np
 import torch
 
@@ -11,8 +13,10 @@ from .unfolder import Unfolder
 
 # nequip wraps the energy model in these to add autograd-based outputs.
 # Their forward() calls torch.autograd.grad internally without retain_graph,
-# which frees the graph we need for the heat-flux autograd. We strip them
-# and call the inner energy module directly for the unfolded pass.
+# which frees the graph we need for the heat-flux autograd. We splice them
+# out of the wrapper chain for the heat-flux forward pass, keeping any
+# surrounding wrappers (RescaleOutput, GraphModel, ...) intact so that
+# rescaling is still applied to per-atom energies.
 _GRAD_WRAPPER_NAMES = (
     "StressOutput",
     "StressForceOutput",
@@ -22,12 +26,98 @@ _GRAD_WRAPPER_NAMES = (
     "StrainStressOutput",
 )
 
+# Fields that only exist after a grad-output wrapper has run. When we splice
+# the grad wrapper out for the heat-flux forward pass, any ancestor
+# RescaleOutput that still references these in its scale/shift key lists
+# would KeyError because the inner energy model never produces them.
+_GRAD_ONLY_FIELDS = frozenset(
+    (
+        AtomicDataDict.FORCE_KEY,
+        AtomicDataDict.PARTIAL_FORCE_KEY,
+        AtomicDataDict.STRESS_KEY,
+        AtomicDataDict.VIRIAL_KEY,
+    )
+)
 
-def _strip_grad_wrappers(model):
-    cur = model
-    while type(cur).__name__ in _GRAD_WRAPPER_NAMES and hasattr(cur, "func"):
-        cur = cur.func
-    return cur
+
+def _find_grad_wrapper_parent(module, ancestors=()):
+    """Locate the first grad-output wrapper in a nequip model tree.
+
+    nequip models are typically structured as e.g.
+    ``GraphModel.model = RescaleOutput.model = GradientOutput.func = SequentialGraphNetwork``.
+    We walk ``.model`` and ``.func`` attributes until we find a module whose
+    class name is in ``_GRAD_WRAPPER_NAMES``, and return a dict with:
+    - ``parent``: the module whose child is the wrapper
+    - ``attr``:   attribute name on ``parent`` holding the wrapper
+    - ``wrapper``: the wrapper module itself
+    - ``rescale_ancestors``: list of RescaleOutput nodes encountered on the
+      path from ``module`` down to ``wrapper`` (so we can temporarily patch
+      their scale/shift key lists)
+
+    Returns ``None`` if no wrapper is found.
+    """
+    for attr in ("model", "func"):
+        sub = getattr(module, attr, None)
+        if not isinstance(sub, torch.nn.Module):
+            continue
+        next_ancestors = ancestors
+        if type(sub).__name__ == "RescaleOutput":
+            next_ancestors = ancestors + (sub,)
+        if type(sub).__name__ in _GRAD_WRAPPER_NAMES and hasattr(sub, "func"):
+            return {
+                "parent": module,
+                "attr": attr,
+                "wrapper": sub,
+                "rescale_ancestors": list(ancestors),
+            }
+        found = _find_grad_wrapper_parent(sub, next_ancestors)
+        if found is not None:
+            return found
+    return None
+
+
+@contextlib.contextmanager
+def _spliced_grad_wrapper(location):
+    """Temporarily splice a grad-output wrapper out of the nequip model chain.
+
+    For the duration of the ``with`` block:
+    - ``location['parent'].<attr>`` is rebound to ``wrapper.func`` so the
+      outer chain bypasses the grad wrapper entirely.
+    - Any ``RescaleOutput`` ancestor's ``scale_keys`` / ``shift_keys`` lists
+      are filtered to remove fields that only the grad wrapper produces
+      (forces, stress, virial, partial forces). Without this,
+      ``RescaleOutput.forward`` would ``KeyError`` trying to rescale a
+      missing ``forces`` tensor.
+
+    Everything is restored on exit. If ``location`` is ``None``, no-op.
+    """
+    if location is None:
+        yield
+        return
+
+    parent = location["parent"]
+    attr = location["attr"]
+    wrapper = location["wrapper"]
+    rescales = location["rescale_ancestors"]
+
+    saved_keys = []
+    for r in rescales:
+        saved_keys.append(
+            (r, list(r.scale_keys), list(r.shift_keys), list(r._all_keys))
+        )
+        r.scale_keys = [k for k in r.scale_keys if k not in _GRAD_ONLY_FIELDS]
+        r.shift_keys = [k for k in r.shift_keys if k not in _GRAD_ONLY_FIELDS]
+        r._all_keys  = [k for k in r._all_keys  if k not in _GRAD_ONLY_FIELDS]
+
+    setattr(parent, attr, wrapper.func)
+    try:
+        yield
+    finally:
+        setattr(parent, attr, wrapper)
+        for r, sk, shk, ak in saved_keys:
+            r.scale_keys = sk
+            r.shift_keys = shk
+            r._all_keys  = ak
 
 
 class UnfoldedHeatFluxCalculator(NequIPCalculator):
@@ -43,8 +133,8 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
     ):
         NequIPCalculator.__init__(self, *args, **kwargs)
 
-        self.energy_model = _strip_grad_wrappers(self.model)
-        if self.energy_model is self.model:
+        self._grad_wrapper_location = _find_grad_wrapper_parent(self.model)
+        if self._grad_wrapper_location is None:
             print(
                 "UnfoldedHeatFluxCalculator: no GradientOutput/StressOutput "
                 "wrapper found on the loaded model; the heat-flux autograd "
@@ -115,7 +205,8 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
         aux_pos = pos.detach().squeeze()[:n, :]
 
         pos.requires_grad_(True)
-        data = self.energy_model(data)
+        with _spliced_grad_wrapper(self._grad_wrapper_location):
+            data = self.model(data)
         energies = data[AtomicDataDict.PER_ATOM_ENERGY_KEY][:n, :]
 
         potential_barycenter = torch.sum(aux_pos * energies, axis=0)
