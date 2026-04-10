@@ -8,6 +8,9 @@ from ase.calculators.calculator import Calculator, all_changes
 from nequip.ase import NequIPCalculator
 from nequip.data import AtomicData, AtomicDataDict
 
+from .unfolder_calculator import _strip_grad_wrappers
+
+
 class FoldedHeatFluxCalculator(NequIPCalculator):
     def __init__(
         self,
@@ -16,11 +19,21 @@ class FoldedHeatFluxCalculator(NequIPCalculator):
     ):
         NequIPCalculator.__init__(self, *args, **kwargs)
 
+        self.energy_model = _strip_grad_wrappers(self.model)
+        if self.energy_model is self.model:
+            print(
+                "FoldedHeatFluxCalculator: no GradientOutput/StressOutput "
+                "wrapper found on the loaded model; the heat-flux autograd "
+                "may fail if the model frees its graph internally."
+            )
+
     def calculate(self, atoms=None, properties=["energy"], system_changes=all_changes):
         # call to base-class to set atoms attribute
         Calculator.calculate(self, atoms)
 
-        # prepare data
+        n = len(atoms)
+
+        # first pass: wrapped model for energy/forces/stress
         data = AtomicData.from_ase(atoms=atoms, r_max=self.r_max)
         for k in AtomicDataDict.ALL_ENERGY_KEYS:
             if k in data:
@@ -29,18 +42,33 @@ class FoldedHeatFluxCalculator(NequIPCalculator):
         data = data.to(self.device)
         data = AtomicData.to_AtomicDataDict(data)
 
-        # predict + extract data
+        data = self.model(data)
+
         self.results = {}
+        self.results["forces"] = data[AtomicDataDict.FORCE_KEY].detach().cpu().numpy()
+        if AtomicDataDict.STRESS_KEY in data:
+            self.results["stress"] = data[AtomicDataDict.STRESS_KEY].detach().squeeze().cpu().numpy()
+        self.results["energies"] = data[AtomicDataDict.PER_ATOM_ENERGY_KEY].detach().cpu().numpy()
+        self.results["energy"] = self.results["energies"].sum()
+
+        del data
+
+        # second pass: bare energy model so the autograd graph survives
+        data = AtomicData.from_ase(atoms=atoms, r_max=self.r_max)
+        for k in AtomicDataDict.ALL_ENERGY_KEYS:
+            if k in data:
+                del data[k]
+        data = self.transform(data)
+        data = data.to(self.device)
+        data = AtomicData.to_AtomicDataDict(data)
 
         pos = data[AtomicDataDict.POSITIONS_KEY]
         aux_pos = pos.detach()
 
-        n = len(atoms)
-
         velocities = torch.tensor(atoms.get_velocities() * units.fs).to(self.device)
 
         pos.requires_grad_(True)
-        data = self.model(data)
+        data = self.energy_model(data)
 
         energies = data[AtomicDataDict.PER_ATOM_ENERGY_KEY]
 
@@ -63,7 +91,7 @@ class FoldedHeatFluxCalculator(NequIPCalculator):
         energy = energies.sum()
 
         gradient = (
-            torch.autograd.grad(energy, pos, retain_graph=True)[0]
+            torch.autograd.grad(energy, pos, retain_graph=False)[0]
             .detach()
             .squeeze()
         )
@@ -73,16 +101,11 @@ class FoldedHeatFluxCalculator(NequIPCalculator):
 
         heat_flux = (hf_potential_term - hf_force_term) / atoms.get_volume()
 
-        self.results = {
+        self.results.update({
             "heat_flux": heat_flux,
             "heat_flux_force_term": hf_force_term,
             "heat_flux_potential_term": hf_potential_term,
-        }
-
-        self.results["forces"] = data[AtomicDataDict.FORCE_KEY].detach().cpu().numpy()
-        self.results["stress"] = data[AtomicDataDict.STRESS_KEY].detach().squeeze().cpu().numpy()
-        self.results["energies"] = energies.detach().cpu().numpy()
-        self.results["energy"] = self.results["energies"].sum()
+        })
 
         return self.results
 

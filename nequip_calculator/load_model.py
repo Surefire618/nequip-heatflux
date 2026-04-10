@@ -10,13 +10,46 @@ from nequip.utils import Config
 from nequip.utils._global_options import _set_global_options
 from nequip.train import Trainer
 from nequip.scripts.train import default_config, check_code_version
-from nequip.scripts.deploy import load_deployed_model, R_MAX_KEY, TYPE_NAMES_KEY
+from nequip.scripts.deploy import load_deployed_model, R_MAX_KEY, TYPE_NAMES_KEY, CONFIG_KEY
+
+
+_MISSING = object()
+
+
+def _config_get(model_config, key, default=_MISSING):
+    """Look up a key in either a Config/dict or in deployed-model metadata.
+
+    Deployed metadata exposes only a small handful of fields at the top level
+    and stashes the full training config as a YAML string under `CONFIG_KEY`;
+    we fall back to parsing that when the direct lookup fails. Raises
+    `KeyError` if the key is absent and no default is provided.
+    """
+    try:
+        if key in model_config:
+            return model_config[key]
+    except TypeError:
+        pass
+
+    cfg_str = None
+    try:
+        cfg_str = model_config.get(CONFIG_KEY)
+    except (AttributeError, TypeError):
+        pass
+    if cfg_str:
+        import yaml
+        cfg = yaml.safe_load(cfg_str)
+        if isinstance(cfg, dict) and key in cfg:
+            return cfg[key]
+
+    if default is _MISSING:
+        raise KeyError(key)
+    return default
+
 
 def _load_deployed_or_traindir(
     path: Path, device, freeze: bool = True
-) -> Tuple[torch.nn.Module, bool, float, List[str]]:
+) -> Tuple[torch.nn.Module, bool, List[str], dict]:
     loaded_deployed_model: bool = False
-    model_r_max = None
     type_names = None
     try:
         model, metadata = load_deployed_model(
@@ -28,7 +61,6 @@ def _load_deployed_or_traindir(
         # the global settings for a deployed model are set by
         # set_global_options in the call to load_deployed_model
         # above
-        model_r_max = float(metadata[R_MAX_KEY])
         type_names = metadata[TYPE_NAMES_KEY].split(" ")
         loaded_deployed_model = True
         model_config = metadata
@@ -50,10 +82,9 @@ def _load_deployed_or_traindir(
             traindir=path.parent, model_name=path.name
         )
         model = model.to(device)
-        model_r_max = model_config["r_max"]
         type_names = model_config["type_names"]
     model.eval()
-    return model, loaded_deployed_model, model_r_max, type_names, model_config
+    return model, loaded_deployed_model, type_names, model_config
 
 
 def load_nequip_model(
@@ -64,10 +95,10 @@ def load_nequip_model(
         config = Config.from_file(str(model_file))
         model = model_from_config(config, initialize=True)
         chemical_symbol_to_type = config.get("chemical_symbol_to_type")
-        model_r_max = config.get("r_max")
+        model_config = config
 
     else:
-        model, loaded_deployed_model, model_r_max, type_names, config = (
+        model, loaded_deployed_model, type_names, model_config = (
             _load_deployed_or_traindir(model_file, device=device)
         )
         print(f"    loaded{' deployed' if loaded_deployed_model else ''} model")
@@ -85,6 +116,8 @@ def load_nequip_model(
                 "The default mapping of chemical symbols as type names didn't make sense; please provide an explicit mapping in `species_to_type_name`"
             )
     transform = TypeMapper(chemical_symbol_to_type=chemical_symbol_to_type)
+
+    model_r_max = float(_config_get(model_config, "r_max"))
 
     if calculator_name == "nequip":
         from nequip.ase import NequIPCalculator
@@ -120,10 +153,12 @@ def load_nequip_model(
     elif calculator_name == "unfolded":
         from nequip_calculator import UnfoldedHeatFluxCalculator
 
+        n_interactions = int(_config_get(model_config, "num_layers", 3))
+
         return UnfoldedHeatFluxCalculator(
             model=model,
             r_max=model_r_max,
-            n_interactions=3.,
+            n_interactions=n_interactions,
             device=device,
             transform=transform,
         )

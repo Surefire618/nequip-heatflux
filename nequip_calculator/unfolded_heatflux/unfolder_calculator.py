@@ -9,6 +9,27 @@ from nequip.data import AtomicData, AtomicDataDict
 
 from .unfolder import Unfolder
 
+# nequip wraps the energy model in these to add autograd-based outputs.
+# Their forward() calls torch.autograd.grad internally without retain_graph,
+# which frees the graph we need for the heat-flux autograd. We strip them
+# and call the inner energy module directly for the unfolded pass.
+_GRAD_WRAPPER_NAMES = (
+    "StressOutput",
+    "StressForceOutput",
+    "GradientOutput",
+    "ForceOutput",
+    "PartialForceOutput",
+    "StrainStressOutput",
+)
+
+
+def _strip_grad_wrappers(model):
+    cur = model
+    while type(cur).__name__ in _GRAD_WRAPPER_NAMES and hasattr(cur, "func"):
+        cur = cur.func
+    return cur
+
+
 class UnfoldedHeatFluxCalculator(NequIPCalculator):
     def __init__(
         self,
@@ -21,6 +42,14 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
         **kwargs
     ):
         NequIPCalculator.__init__(self, *args, **kwargs)
+
+        self.energy_model = _strip_grad_wrappers(self.model)
+        if self.energy_model is self.model:
+            print(
+                "UnfoldedHeatFluxCalculator: no GradientOutput/StressOutput "
+                "wrapper found on the loaded model; the heat-flux autograd "
+                "may fail if the model frees its graph internally."
+            )
 
         # effective cutoff
         cutoff = self.r_max
@@ -86,7 +115,7 @@ class UnfoldedHeatFluxCalculator(NequIPCalculator):
         aux_pos = pos.detach().squeeze()[:n, :]
 
         pos.requires_grad_(True)
-        data = self.model(data)
+        data = self.energy_model(data)
         energies = data[AtomicDataDict.PER_ATOM_ENERGY_KEY][:n, :]
 
         potential_barycenter = torch.sum(aux_pos * energies, axis=0)
