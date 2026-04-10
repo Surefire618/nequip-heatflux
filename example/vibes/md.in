@@ -1,0 +1,24 @@
+[files]
+geometry:                      geometry.in
+primitive:                     geometry.in.primitive
+supercell:                     geometry.in.supercell
+
+[calculator]
+module:                        nequip_calculator
+name:                          calculator
+
+[calculator.parameters]
+model_file:                    nequip/best_model.pth
+device:                        cuda
+calculator_name:               unfolded
+
+[md]
+driver:                        VelocityVerlet
+timestep:                      4
+maxsteps:                      100
+compute_stresses:              False
+workdir:                       md
+
+[md.kwargs]
+logfile:                       md.log
+
